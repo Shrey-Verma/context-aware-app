@@ -1,0 +1,15 @@
+opencv-python>=4.5.0
+numpy>=1.19.0
+pytesseract>=0.3.8
+openai-whisper>=20230124
+torch>=1.8.0
+transformers>=4.15.0
+scenedetect>=0.6.0
+matplotlib>=3.3.0
+tqdm>=4.50.0
+pillow>=8.0.0
+mistralai>=0.0.7
+layoutparser
+easyocr
+mmdet
+ultralytics 
