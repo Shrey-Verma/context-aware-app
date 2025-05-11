@@ -82,10 +82,25 @@ class VideoExplainer:
         # Speech recognition model for transcription
         self.whisper_model = whisper.load_model("base")
         
-        # UI element detection model
-        self.ui_detector = pipeline("object-detection", 
+        # Initialize both UI detection models
+        # 1. General object detection with DETR (keep as fallback)
+        self.general_ui_detector = pipeline("object-detection", 
                                 model="facebook/detr-resnet-50", 
                                 threshold=self.ui_detection_threshold)
+        
+        # 2. Specialized UI detection with Microsoft LayoutLM
+        try:
+            print("Initializing specialized UI detection model...")
+            # Microsoft's LayoutLM for document and UI layout analysis
+            # We'll use Hugging Face's pipeline for document-question-answering
+            self.specialized_ui_detector = pipeline("document-question-answering", 
+                                            model="impira/layoutlm-document-qa")
+            self.use_specialized_ui = True
+            print("Successfully initialized specialized LayoutLM model for UI detection")
+        except Exception as e:
+            print(f"Warning: Could not initialize specialized UI model: {e}")
+            print("Falling back to general object detection only")
+            self.use_specialized_ui = False
         
         # Initialize Mistral client if requested
         self.mistral_client = None
@@ -203,10 +218,25 @@ class VideoExplainer:
     
     def _detect_ui_elements(self):
         """Detect UI elements in the screenshots."""
-        from utils.ui_detection import detect_ui_elements
+        from utils.ui_detection import detect_ui_elements, detect_specialized_ui_elements
         
         print("Detecting UI elements in screenshots...")
-        self.screenshots = detect_ui_elements(self.screenshots, self.ui_detector)
+        
+        # Pass both detectors to the utility function
+        if hasattr(self, 'use_specialized_ui') and self.use_specialized_ui:
+            print("Using enhanced UI detection with Microsoft LayoutLMv2...")
+            self.screenshots = detect_specialized_ui_elements(
+                self.screenshots, 
+                self.general_ui_detector, 
+                self.specialized_ui_detector
+            )
+        else:
+            # Fall back to original implementation
+            print("Using standard UI detection...")
+            self.screenshots = detect_ui_elements(
+                self.screenshots, 
+                self.general_ui_detector
+            )
     
     def _match_transcript_with_screenshots(self):
         """Match transcript segments with relevant screenshots."""
@@ -317,7 +347,7 @@ class VideoExplainer:
     
     def visualize_results(self):
         """Visualize the results with a timeline of screenshots and transcript."""
-        from video_explainer.utils.visualization import create_timeline_visualization
+        from utils.visualization import create_timeline_visualization
         
         print("Visualizing results...")
         viz_path = os.path.join(self.output_dir, "visualization.png")

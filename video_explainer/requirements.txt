@@ -12,4 +12,5 @@ mistralai>=0.0.7
 layoutparser
 easyocr
 mmdet
-ultralytics 
+ultralytics
+sentencepiece>=0.1.96
