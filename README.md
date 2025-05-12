@@ -1,6 +1,6 @@
 # VideoExplainer
 
-VideoExplainer is a tool for analyzing and answering questions about video content using advanced AI techniques. It extracts transcripts, detects scenes, captures screenshots, identifies UI elements, and generates comprehensive answers about the video content.
+A tool for analyzing and answering questions about video content using advanced AI techniques. It extracts transcripts, detects scenes, captures screenshots, identifies UI elements, and generates comprehensive answers about the video content.
 
 ## Features
 
