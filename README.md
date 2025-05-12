@@ -60,7 +60,7 @@ python main.py --video path/to/your/video.mp4 --question "What happens in this v
 ### Example
 
 ```bash
-python main.py --video demo_video.mp4 --question "What is the main topic of this presentation?" --output analysis_results --interval 1.5 --use-mistral --api-key your_mistral_api_key --visualize --report
+python main.py --video demo_video.mp4 --question "What is the main topic of this presentation?" --output analysis_results --interval 1.5 --use-mistral --api-key your_mistral_api_key
 ```
 
 ## Output
