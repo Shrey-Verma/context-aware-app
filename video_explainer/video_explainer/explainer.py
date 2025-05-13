@@ -130,26 +130,137 @@ class VideoExplainer:
     def process(self):
         """Process the video and generate an answer."""
         print(f"Processing video: {self.video_path}")
-
-        # Extract transcript
-        self._extract_transcript()
-
-        # Segment transcript
-        self._segment_transcript()
-
+        
+        # Check if the video has audio
+        has_audio = self._check_for_audio()
+        
+        if has_audio:
+            # Extract transcript
+            self._extract_transcript()
+            
+            # Segment transcript
+            self._segment_transcript()
+        else:
+            print("No audio detected in the video. Skipping transcript extraction.")
+            # Create empty transcript data (but we'll still create segments based on screenshots later)
+            self.transcript = "No audio detected in the video."
+            self.transcript_segments = []
+        
         # Detect scenes and capture screenshots
         self._detect_scenes_and_screenshots()
-
+        
         # Detect UI elements
         self._detect_ui_elements()
-
-        # Match transcript segments with screenshots
-        self._match_transcript_with_screenshots()
-
+        
+        # Match transcript segments with screenshots (or create segments if no transcript)
+        # The updated function creates artificial segments for videos without audio
+        self.transcript_segments = self._match_transcript_with_screenshots()
+        
         # Generate answer
         self._generate_answer()
-
+        
         return self.answer
+    
+    def _check_for_audio(self):
+        """
+        A simple check to determine if the video has audio.
+        Uses a lightweight approach without external dependencies.
+        
+        Returns:
+            bool: True if the video likely has audio, False otherwise
+        """
+        try:
+            # Approach 1: Try to extract a small audio sample
+            import tempfile
+            import os
+            import numpy as np
+            
+            # Create a temporary WAV file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                temp_path = temp_file.name
+            
+            try:
+                # Use moviepy to extract a small audio sample (first 1 second)
+                from moviepy.editor import VideoFileClip
+                
+                video = VideoFileClip(self.video_path)
+                if video.audio is None:
+                    print("MoviePy reports no audio stream in video")
+                    video.close()
+                    return False
+                    
+                # Try to extract a small audio sample
+                try:
+                    # Get first 1 second, or the whole clip if shorter
+                    duration = min(1.0, video.duration)
+                    subclip = video.subclip(0, duration)
+                    
+                    # Write audio to temp file
+                    if subclip.audio is not None:
+                        subclip.audio.write_audiofile(temp_path, verbose=False, logger=None)
+                        video.close()
+                        
+                        # Check if the file exists and has content
+                        if os.path.exists(temp_path) and os.path.getsize(temp_path) > 1000:
+                            print("Audio sample successfully extracted from video")
+                            return True
+                        else:
+                            print("Audio sample extraction yielded no substantial data")
+                            return False
+                    else:
+                        print("Subclip has no audio")
+                        video.close()
+                        return False
+                except Exception as e:
+                    print(f"Audio extraction failed: {e}")
+                    video.close()
+                    return False
+                    
+            except (ImportError, Exception) as e:
+                print(f"MoviePy approach failed: {e}. Trying OpenCV approach...")
+                
+                # Approach 2: OpenCV-based check (less reliable)
+                import cv2
+                
+                cap = cv2.VideoCapture(self.video_path)
+                
+                # Some versions of OpenCV can check audio presence
+                if hasattr(cv2, 'CAP_PROP_AUDIO_ENABLED'):
+                    has_audio = bool(cap.get(cv2.CAP_PROP_AUDIO_ENABLED))
+                    cap.release()
+                    return has_audio
+                
+                # If we can't definitively check, look at file format/size heuristics
+                file_size = os.path.getsize(self.video_path)
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                
+                cap.release()
+                
+                # Very rough heuristic based on common video formats
+                # Audio typically adds at least a few hundred KB
+                expected_video_size = frame_count * width * height * 0.1  # Very rough estimate
+                
+                if (file_size > expected_video_size * 1.2 and  # Size is noticeably larger than expected
+                    frame_count > 30):                          # Not just a few frames
+                    print("File characteristics suggest video likely has audio")
+                    return True
+                else:
+                    print("File characteristics suggest video might not have audio")
+                    return False
+                    
+        except Exception as e:
+            print(f"Audio detection failed with error: {e}")
+            print("Defaulting to assume video has audio")
+            return True
+        finally:
+            # Clean up temporary file
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
 
     def _extract_transcript(self):
         """Extract transcript from the video."""
@@ -248,23 +359,50 @@ class VideoExplainer:
         from utils.ui_detection import match_transcript_with_screenshots
 
         print("Matching transcript segments with screenshots...")
-        self.transcript_segments = match_transcript_with_screenshots(
-            self.transcript_segments, 
+        updated_segments = match_transcript_with_screenshots(
+            self.transcript_segments if self.transcript_segments is not None else [], 
             self.screenshots
         )
+        
+        # Always ensure we have valid segments
+        if updated_segments is not None:
+            self.transcript_segments = updated_segments
+        elif self.transcript_segments is None:
+            self.transcript_segments = []
+        
+        print(f"After matching: transcript_segments is {type(self.transcript_segments)} with {len(self.transcript_segments)} segments")
+        return self.transcript_segments
 
     def _generate_answer(self):
-        """Generate an answer based on transcript and screenshots using OpenAI."""  # Changed from Mistral
-        print("Generating answer with OpenAI...")  # Changed from Mistral
+        """Generate an answer based on transcript and screenshots using OpenAI."""
+        print("Generating answer with OpenAI...")
 
-        # Debug the status of the OpenAI client  # Changed from Mistral
-        print(f"OpenAI client status: use_openai={self.use_openai}, client is {'initialized' if self.openai_client is not None else 'NOT initialized'}")  # Changed from Mistral
+        # Debug the status of the OpenAI client and transcript segments
+        print(f"OpenAI client status: use_openai={self.use_openai}, client is {'initialized' if self.openai_client is not None else 'NOT initialized'}")
+        print(f"Transcript segments status: {type(self.transcript_segments)}")
 
-        if not self.use_openai or self.openai_client is None:  # Changed from Mistral
-            raise ValueError("OpenAI client is not initialized. Make sure to set use_openai=True and provide a valid API key.")  # Changed from Mistral
+        if not self.use_openai or self.openai_client is None:
+            raise ValueError("OpenAI client is not initialized. Make sure to set use_openai=True and provide a valid API key.")
 
+        # Ensure transcript_segments is never None
+        if self.transcript_segments is None:
+            print("Warning: transcript_segments was None. Creating empty list...")
+            self.transcript_segments = []
+        
         # Build context from transcript segments and screenshots
         context = []
+        
+        # Safely check for real transcript
+        has_real_transcript = False
+        for segment in self.transcript_segments:
+            # Use dict.get() to safely access text field
+            segment_text = segment.get("text", "")
+            if not segment_text.startswith("[No audio]"):
+                has_real_transcript = True
+                break
+
+        print("Generating answer with OpenAI...")
+        
         for i, segment in enumerate(self.transcript_segments):
             segment_context = {
                 "id": i,
@@ -276,40 +414,74 @@ class VideoExplainer:
 
             # Add UI elements from the screenshots
             for screenshot in segment["screenshots"]:
-                for ui_element in screenshot["ui_elements"]:
+                for ui_element in screenshot.get("ui_elements", []):
                     segment_context["ui_elements"].append({
-                        "label": ui_element["label"],
+                        "label": ui_element.get("label", "unknown"),
                         "screenshot": os.path.basename(screenshot["path"])
                     })
 
             context.append(segment_context)
 
-        # Create prompt for OpenAI  # Changed from Mistral
-        prompt = self._create_prompt(context)
+        # Extract video filename from path
+        video_filename = os.path.basename(self.video_path)
+        
+        # Create a video metadata object to include in the context
+        video_metadata = {
+            "filename": video_filename,
+            "duration": f"{timedelta(seconds=self.duration)}",
+            "frame_count": self.frame_count,
+            "fps": self.fps,
+            "has_audio": has_real_transcript,  # Accurately indicate if the video has real audio
+            "screenshot_count": len(self.screenshots),
+            "ui_element_count": sum(len(s.get("ui_elements", [])) for s in self.screenshots),
+            "scene_count": len(self.scenes)
+        }
 
-        # Call OpenAI API  # Changed from Mistral API
+        # Create prompt for OpenAI with special instructions for videos without audio
+        prompt = self._create_prompt(context, video_metadata, has_audio=has_real_transcript)
+
+        # Call OpenAI API
         try:
-            print("Attempting to call OpenAI API...")  # Changed from Mistral API
+            print("Attempting to call OpenAI API...")
 
-            # Call OpenAI Chat Completion API
-            response = self.openai_client.responses.create(
-                model="gpt-4.1",  # Or gpt-3.5-turbo depending on your needs
-                input=[
-                    {"role": "system", "content": "You are a helpful assistant that analyzes videos based on transcripts and screenshots."},
-                    {"role": "user", "content": prompt}
-                ]
-                # temperature=0.5
-            )
+            # First, try the Anthropic Claude-compatible format API format 
+            try:
+                print("Trying GPT API...")
+                response = self.openai_client.responses.create(
+                    model="gpt-4.1",  # Try with the latest available model
+                    input=[
+                        {"role": "system", "content": f"You are a helpful assistant that analyzes videos based on {'transcripts and ' if has_real_transcript else ''}screenshots. The video being analyzed is {video_filename}.{'The video has no audio, so focus on visual analysis.' if not has_real_transcript else ''}"},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                
+                # Extract content from response
+                openai_answer = response.output_text
+                print("Successfully used Claude-compatible API format")
+                
+            except (AttributeError, TypeError) as api_format_error:
+                # If the first approach fails, try the standard OpenAI chat completions format
+                print(f"Claude-compatible format failed ({api_format_error}), trying standard OpenAI chat completions format...")
+                
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-4o" if hasattr(self, 'openai_model') and '4' in self.openai_model else "gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": f"You are a helpful assistant that analyzes videos based on {'transcripts and ' if has_real_transcript else ''}screenshots. The video being analyzed is {video_filename}.{'The video has no audio, so focus on visual analysis.' if not has_real_transcript else ''}"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.5
+                )
+                
+                # Extract content from response
+                openai_answer = response.choices[0].message.content
+                print("Successfully used standard OpenAI chat completions format")
 
-            # Extract content from response
-            openai_answer = response.output_text  # Changed from mistral_answer
-
-            print(f"Successfully received response from OpenAI API")  # Changed from Mistral API
-            self.answer = openai_answer  # Changed from mistral_answer
+            print(f"Successfully received response from OpenAI API")
+            self.answer = openai_answer
 
             # Process the answer to include actual screenshot images
             # Find all references to screenshots in the answer
-            enhanced_answer = self._enhance_answer_with_images(openai_answer)  # Changed from mistral_answer
+            enhanced_answer = self._enhance_answer_with_images(openai_answer)
 
             # Save the enhanced answer to a file
             answer_path = os.path.join(self.output_dir, "answer.md")
@@ -319,7 +491,7 @@ class VideoExplainer:
             print(f"Enhanced answer generated and saved to {answer_path}")
 
             # Keep the original answer text for other uses
-            self.answer = openai_answer  # Changed from mistral_answer
+            self.answer = openai_answer
 
         except Exception as e:
             print(f"Error generating answer with OpenAI: {e}")  # Changed from Mistral
@@ -468,9 +640,37 @@ class VideoExplainer:
 
         return enhanced_answer
 
-    def _create_prompt(self, context):
+    def _create_prompt(self, context, video_metadata=None, has_audio=True):
         """Create a prompt for OpenAI API."""  # Changed from Mistral API
+        
+        video_info = ""
+        if video_metadata:
+            video_info = f"""
+            Video Information:
+            - Filename: {video_metadata['filename']}
+            - Duration: {video_metadata['duration']}
+            - Frame Count: {video_metadata['frame_count']}
+            - FPS: {video_metadata['fps']}
+            - Has Audio: {video_metadata['has_audio']}
+            - Screenshot Count: {video_metadata['screenshot_count']}
+            - UI Element Count: {video_metadata['ui_element_count']}
+            - Scene Count: {video_metadata['scene_count']}
+            """
+        
+        # Adjust the prompt based on whether the video has audio
+        if has_audio:
+            transcript_info = "Here is the transcript of the video, segmented with timestamps and associated screenshots:"
+        else:
+            transcript_info = "This video has no audio. Instead, I've created visual segments based on the screenshots, with timestamps:"
+        
         prompt = f"""
+        I need you to analyze a video and answer this question: "{self.question}"
+        
+        {video_info}
+        
+        {transcript_info}
+        
+        {json.dumps(context, indent=2)}
         I need you to analyze a video and answer this question: "{self.question}"
         
         You are assisting with analyzing a video walkthrough of a SaaS application. The goal is to understand what the user is doing and answer a specific question about their actions.
@@ -485,6 +685,7 @@ class VideoExplainer:
             3. Reference the most relevant screenshot used in your explanation. Ensure screenshots are referenced in ascending timestamp order, reflecting the true sequence of events. The user should know the scene changes and clicks that occurred.
             4. Format your response in markdown
             5. Be clear and concise
+            6. Do NOT ask for clarification or additional information
         
         When referencing screenshots, please use the format "Screenshot X" or "screenshot_X.jpg" so they can be included in the final output.
 

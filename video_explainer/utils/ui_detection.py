@@ -301,15 +301,67 @@ def detect_specialized_ui_elements(screenshots, general_detector, specialized_de
 
 def match_transcript_with_screenshots(transcript_segments, screenshots):
     """
-    Match transcript segments with relevant screenshots
+    Match transcript segments with relevant screenshots.
+    If no transcript segments are provided, creates artificial segments based on screenshots.
     
     Args:
-        transcript_segments: List of transcript segments
+        transcript_segments: List of transcript segments (can be empty for videos without audio)
         screenshots: List of screenshots
         
     Returns:
-        list: Updated transcript segments with matched screenshots
+        list: Updated transcript segments with matched screenshots,
+              or created segments if no transcript was available
     """
+    # Check if we have transcript segments
+    if not transcript_segments:
+        # No transcript (video has no audio) - create artificial segments based on screenshots
+        print("No transcript segments available. Creating artificial segments based on screenshots...")
+        
+        # Sort screenshots by timestamp
+        sorted_screenshots = sorted(screenshots, key=lambda x: x.get("timestamp", 0))
+        
+        if not sorted_screenshots:
+            print("Warning: No screenshots available to create segments")
+            return []
+        
+        # Create artificial segments
+        artificial_segments = []
+        
+        # Option 1: Create one segment per screenshot
+        for i, screenshot in enumerate(sorted_screenshots):
+            # Get timestamp of current screenshot
+            current_time = screenshot.get("timestamp", 0)
+            
+            # Calculate segment start/end times
+            # For first screenshot, start at 0
+            if i == 0:
+                segment_start = 0
+            else:
+                # Start at midpoint between previous and current screenshot
+                prev_time = sorted_screenshots[i-1].get("timestamp", 0)
+                segment_start = (prev_time + current_time) / 2
+            
+            # For last screenshot, end at video end (use a bit after the last screenshot)
+            if i == len(sorted_screenshots) - 1:
+                segment_end = current_time + 5  # Add 5 seconds after last screenshot
+            else:
+                # End at midpoint between current and next screenshot
+                next_time = sorted_screenshots[i+1].get("timestamp", 0)
+                segment_end = (current_time + next_time) / 2
+            
+            # Create artificial segment
+            segment = {
+                "start": segment_start,
+                "end": segment_end,
+                "text": f"[No audio] Visual content at {current_time:.2f} seconds",
+                "screenshots": [screenshot]
+            }
+            
+            artificial_segments.append(segment)
+        
+        return artificial_segments
+    
+    # Normal processing for videos with audio transcript
     for segment in transcript_segments:
         segment_start = segment["start"]
         segment_end = segment["end"]
@@ -317,7 +369,7 @@ def match_transcript_with_screenshots(transcript_segments, screenshots):
         # Find screenshots that fall within this segment's time range
         matched_screenshots = []
         for screenshot in screenshots:
-            if segment_start <= screenshot["timestamp"] <= segment_end:
+            if segment_start <= screenshot.get("timestamp", 0) <= segment_end:
                 matched_screenshots.append(screenshot)
         
         # If no screenshots in exact range, get closest ones
@@ -326,8 +378,9 @@ def match_transcript_with_screenshots(transcript_segments, screenshots):
             closest_before = None
             min_diff_before = float('inf')
             for screenshot in screenshots:
-                if screenshot["timestamp"] < segment_start:
-                    diff = segment_start - screenshot["timestamp"]
+                screenshot_time = screenshot.get("timestamp", 0)
+                if screenshot_time < segment_start:
+                    diff = segment_start - screenshot_time
                     if diff < min_diff_before:
                         min_diff_before = diff
                         closest_before = screenshot
@@ -336,8 +389,9 @@ def match_transcript_with_screenshots(transcript_segments, screenshots):
             closest_after = None
             min_diff_after = float('inf')
             for screenshot in screenshots:
-                if screenshot["timestamp"] > segment_end:
-                    diff = screenshot["timestamp"] - segment_end
+                screenshot_time = screenshot.get("timestamp", 0)
+                if screenshot_time > segment_end:
+                    diff = screenshot_time - segment_end
                     if diff < min_diff_after:
                         min_diff_after = diff
                         closest_after = screenshot
@@ -349,7 +403,7 @@ def match_transcript_with_screenshots(transcript_segments, screenshots):
                 matched_screenshots.append(closest_after)
         
         # Sort matched screenshots by timestamp
-        matched_screenshots.sort(key=lambda x: x["timestamp"])
+        matched_screenshots.sort(key=lambda x: x.get("timestamp", 0))
         
         # Add unique screenshots to segment
         segment["screenshots"] = []
