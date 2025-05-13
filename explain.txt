@@ -1,0 +1,1 @@
+Video Input → Transcript Extraction → Scene Detection → Screenshot Capture → UI Element Detection → Answer Generation → Visualization & Reporting

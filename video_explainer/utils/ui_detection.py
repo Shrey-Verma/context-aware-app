@@ -309,3 +309,151 @@ def match_transcript_with_screenshots(transcript_segments, screenshots):
                 seen_paths.add(screenshot["path"])
     
     return transcript_segments
+
+def annotate_ui_elements(screenshots, output_dir=None):
+    """
+    Annotate detected UI elements on screenshots by drawing red boxes around them
+    
+    Args:
+        screenshots: List of screenshot information with detected UI elements
+        output_dir: Directory to save annotated images (if None, overwrites original)
+        
+    Returns:
+        list: Screenshots with added 'annotated_path' field
+    """
+    import os
+    import cv2
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+    
+    print("Annotating UI elements on screenshots...")
+    
+    for screenshot in tqdm(screenshots):
+        # Skip if no UI elements detected
+        if not screenshot.get("ui_elements"):
+            continue
+            
+        # Load the image
+        img_path = screenshot["path"]
+        img = cv2.imread(img_path)
+        
+        if img is None:
+            print(f"Warning: Could not load image {img_path}")
+            continue
+            
+        # Create a copy for annotation
+        annotated_img = img.copy()
+        
+        # Define colors for different element types
+        color_map = {
+            "general_element": (0, 0, 255),     # Red for DETR
+            "layout_detected": (255, 0, 0),     # Blue for LayoutLM
+            "ocr_button": (0, 255, 0),          # Green for OCR buttons
+            "ocr_input": (255, 255, 0),         # Cyan for OCR input fields
+            "ocr_menu": (255, 0, 255),          # Magenta for OCR menu items
+            "ocr_text": (128, 128, 128)         # Gray for general OCR text
+        }
+        
+        # Draw bounding boxes for each UI element
+        for element in screenshot["ui_elements"]:
+            # Skip elements without proper box coordinates
+            if "box" not in element or not all(k in element["box"] for k in ["xmin", "ymin", "xmax", "ymax"]):
+                continue
+                
+            # Extract coordinates
+            box = element["box"]
+            x_min, y_min = int(box["xmin"]), int(box["ymin"])
+            x_max, y_max = int(box["xmax"]), int(box["ymax"])
+            
+            # Skip invalid boxes
+            if x_min >= x_max or y_min >= y_max or x_min < 0 or y_min < 0:
+                continue
+                
+            # Get color based on element type (default to red)
+            color = color_map.get(element.get("type", ""), (0, 0, 255))
+            
+            # Draw rectangle
+            cv2.rectangle(annotated_img, (x_min, y_min), (x_max, y_max), color, 2)
+            
+            # Add label text
+            label_text = f"{element.get('label', 'unknown')}"
+            if "text" in element:
+                label_text += f": {element['text'][:20]}"
+            if "score" in element:
+                label_text += f" ({element['score']:.2f})"
+                
+            # Put text with background for better visibility
+            text_size, _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(annotated_img, (x_min, y_min - text_size[1] - 5), 
+                         (x_min + text_size[0], y_min), color, -1)
+            cv2.putText(annotated_img, label_text, (x_min, y_min - 5), 
+                      cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # Determine output path
+        if output_dir:
+            # Create output directory if it doesn't exist
+            os.makedirs(output_dir, exist_ok=True)
+            base_name = os.path.basename(img_path)
+            annotated_path = os.path.join(output_dir, f"annotated_{base_name}")
+        else:
+            # Overwrite the original path
+            file_dir = os.path.dirname(img_path)
+            base_name = os.path.basename(img_path)
+            annotated_path = os.path.join(file_dir, f"annotated_{base_name}")
+        
+        # Save the annotated image
+        cv2.imwrite(annotated_path, annotated_img)
+        
+        # Add annotated path to screenshot info
+        screenshot["annotated_path"] = annotated_path
+        
+    print(f"UI elements annotation complete. Annotated {len(screenshots)} screenshots.")
+    return screenshots
+
+# Add a legend to help understand the annotation colors
+def create_annotation_legend(output_dir):
+    """
+    Create a legend image explaining the annotation colors
+    
+    Args:
+        output_dir: Directory to save the legend image
+    """
+    import cv2
+    import numpy as np
+    import os
+    
+    # Create a white canvas
+    legend = np.ones((300, 500, 3), dtype=np.uint8) * 255
+    
+    # Define colors and their meanings
+    colors = [
+        ((0, 0, 255), "DETR Detection (General Objects)"),
+        ((255, 0, 0), "LayoutLM Detection (Document Elements)"),
+        ((0, 255, 0), "OCR Button Detection"),
+        ((255, 255, 0), "OCR Input Field Detection"),
+        ((255, 0, 255), "OCR Menu Item Detection"),
+        ((128, 128, 128), "OCR Text Detection")
+    ]
+    
+    # Add title
+    cv2.putText(legend, "UI Element Detection Legend", (20, 30), 
+               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+    
+    # Add color samples and descriptions
+    for i, (color, description) in enumerate(colors):
+        y_pos = 70 + i * 35
+        
+        # Draw color rectangle
+        cv2.rectangle(legend, (20, y_pos - 15), (50, y_pos + 15), color, -1)
+        
+        # Add description
+        cv2.putText(legend, description, (60, y_pos), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+    
+    # Save the legend
+    os.makedirs(output_dir, exist_ok=True)
+    legend_path = os.path.join(output_dir, "annotation_legend.png")
+    cv2.imwrite(legend_path, legend)
+    
+    print(f"Annotation legend created at {legend_path}")
+    return legend_path

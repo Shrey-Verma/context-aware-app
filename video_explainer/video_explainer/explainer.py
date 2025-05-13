@@ -9,7 +9,7 @@ from mistralai import Mistral
 
 # Import from utility modules
 from utils.transcript import extract_transcript, segment_transcript
-from utils.scene_detection import detect_scenes, capture_screenshots, detect_scenes_and_screenshots
+from utils.scene_detection import capture_screenshots, detect_scenes_and_screenshots
 from utils.ui_detection import detect_ui_elements, match_transcript_with_screenshots
 
 
@@ -218,13 +218,16 @@ class VideoExplainer:
     
     def _detect_ui_elements(self):
         """Detect UI elements in the screenshots."""
-        from utils.ui_detection import detect_ui_elements, detect_specialized_ui_elements
+        from utils.ui_detection import detect_ui_elements, detect_specialized_ui_elements, annotate_ui_elements, create_annotation_legend
         
         print("Detecting UI elements in screenshots...")
         
+        # Create annotated screenshots directory
+        annotated_dir = os.path.join(self.output_dir, "annotated_screenshots")
+        
         # Pass both detectors to the utility function
         if hasattr(self, 'use_specialized_ui') and self.use_specialized_ui:
-            print("Using enhanced UI detection with Microsoft LayoutLMv2...")
+            print("Using enhanced UI detection with Microsoft LayoutLM...")
             self.screenshots = detect_specialized_ui_elements(
                 self.screenshots, 
                 self.general_ui_detector, 
@@ -237,6 +240,14 @@ class VideoExplainer:
                 self.screenshots, 
                 self.general_ui_detector
             )
+        
+        # Annotate UI elements on screenshots
+        print("Annotating detected UI elements...")
+        self.screenshots = annotate_ui_elements(self.screenshots, annotated_dir)
+        
+        # Create a legend image to explain the annotation colors
+        legend_path = create_annotation_legend(annotated_dir)
+        print(f"Created annotation legend at {legend_path}")
     
     def _match_transcript_with_screenshots(self):
         """Match transcript segments with relevant screenshots."""
@@ -311,12 +322,19 @@ class VideoExplainer:
             print(f"Successfully received response from Mistral API")
             self.answer = mistral_answer
             
-            # Save the answer to a file
+            # Process the answer to include actual screenshot images
+            # Find all references to screenshots in the answer
+            enhanced_answer = self._enhance_answer_with_images(mistral_answer)
+            
+            # Save the enhanced answer to a file
             answer_path = os.path.join(self.output_dir, "answer.md")
             with open(answer_path, "w") as f:
-                f.write(self.answer)
+                f.write(enhanced_answer)
             
-            print(f"Answer generated and saved to {answer_path}")
+            print(f"Enhanced answer generated and saved to {answer_path}")
+            
+            # Keep the original answer text for other uses
+            self.answer = mistral_answer
             
         except Exception as e:
             print(f"Error generating answer with Mistral: {e}")
@@ -324,7 +342,145 @@ class VideoExplainer:
             raise
         
         return self.answer
-    
+
+    def _enhance_answer_with_images(self, answer_text):
+        """
+        Enhance the answer by adding actual screenshot images where they are referenced.
+        
+        Args:
+            answer_text: The original answer text from Mistral
+            
+        Returns:
+            str: Enhanced answer with embedded images
+        """
+        import re
+        
+        # Create a dictionary to map screenshot filenames to their full paths
+        screenshot_map = {}
+        
+        # Collect all screenshots paths
+        for screenshot in self.screenshots:
+            # Use annotated screenshots if available
+            if hasattr(self, 'annotate_ui') and self.annotate_ui and "annotated_path" in screenshot:
+                path = screenshot["annotated_path"]
+            else:
+                path = screenshot["path"]
+            
+            # Map filename to full path
+            basename = os.path.basename(path)
+            screenshot_map[basename] = path
+            
+            # Also try matching without the "screenshot_" prefix
+            if basename.startswith("screenshot_"):
+                basename_short = basename[len("screenshot_"):]
+                screenshot_map[basename_short] = path
+        
+        # Define patterns to look for screenshot references
+        patterns = [
+            r"screenshot_\d+\.jpg",
+            r"screenshot[_\s]*(\d+)",
+            r"Screenshot[_\s]*(\d+)",
+            r"\(Screenshot[_\s]*(\d+)\)",
+            r"screenshot (\d{6})",
+            r"screenshot (\d+)"
+        ]
+        
+        # Process the answer text
+        enhanced_answer = answer_text
+        
+        # Track which screenshots have been added
+        added_screenshots = set()
+        
+        # Search for patterns
+        for pattern in patterns:
+            matches = re.finditer(pattern, enhanced_answer)
+            for match in matches:
+                match_text = match.group(0)
+                
+                # Extract filename or number
+                if "." in match_text:
+                    # Full filename pattern
+                    filename = match_text
+                else:
+                    # Extract number and try to find matching file
+                    if '(' in match_text:
+                        # Remove parentheses
+                        match_text = match_text.replace('(', '').replace(')', '')
+                    
+                    # Extract digits
+                    digits = re.search(r'(\d+)', match_text)
+                    if digits:
+                        number = digits.group(1)
+                        
+                        # Try different filename formats
+                        for format_str in ["screenshot_{:06d}.jpg", "screenshot_{}.jpg"]:
+                            filename = format_str.format(int(number))
+                            if filename in screenshot_map:
+                                break
+                        else:
+                            # If no match, try to find by index
+                            try:
+                                idx = int(number)
+                                if 0 <= idx < len(self.screenshots):
+                                    if "annotated_path" in self.screenshots[idx]:
+                                        path = self.screenshots[idx]["annotated_path"]
+                                    else:
+                                        path = self.screenshots[idx]["path"]
+                                    filename = os.path.basename(path)
+                                else:
+                                    continue  # Skip if index is out of range
+                            except ValueError:
+                                continue  # Skip if number conversion fails
+                    else:
+                        continue  # Skip if no digits found
+                
+                # Check if screenshot exists in our map
+                if filename in screenshot_map and filename not in added_screenshots:
+                    # Path to the screenshot
+                    screenshot_path = screenshot_map[filename]
+                    
+                    # Create markdown for the image
+                    image_markdown = f"\n\n![{match_text}]({screenshot_path})\n"
+                    
+                    # Replace the reference with the reference + image
+                    # enhanced_answer = enhanced_answer.replace(match_text, match_text + image_markdown)
+                    
+                    # Add image at the end of the paragraph containing the reference
+                    paragraph_end = enhanced_answer.find("\n\n", enhanced_answer.find(match_text))
+                    if paragraph_end > 0:
+                        enhanced_answer = enhanced_answer[:paragraph_end] + image_markdown + enhanced_answer[paragraph_end:]
+                    else:
+                        # If not found, append to the end
+                        enhanced_answer += image_markdown
+                    
+                    # Mark as added to avoid duplicates
+                    added_screenshots.add(filename)
+        
+        # Add a summary section with key screenshots if none were added
+        if not added_screenshots and self.screenshots:
+            enhanced_answer += "\n\n## Key Screenshots from the Video\n\n"
+            
+            # Add up to 5 key screenshots (evenly distributed)
+            key_indices = []
+            if len(self.screenshots) <= 5:
+                key_indices = range(len(self.screenshots))
+            else:
+                step = len(self.screenshots) // 5
+                key_indices = range(0, len(self.screenshots), step)[:5]
+            
+            for idx in key_indices:
+                screenshot = self.screenshots[idx]
+                if hasattr(self, 'annotate_ui') and self.annotate_ui and "annotated_path" in screenshot:
+                    path = screenshot["annotated_path"]
+                else:
+                    path = screenshot["path"]
+                
+                timestamp = timedelta(seconds=screenshot["timestamp"])
+                enhanced_answer += f"### Timestamp: {timestamp}\n\n"
+                enhanced_answer += f"![Screenshot at {timestamp}]({path})\n\n"
+        
+        return enhanced_answer
+
     def _create_prompt(self, context):
         """Create a prompt for Mistral API."""
         prompt = f"""
@@ -337,9 +493,11 @@ class VideoExplainer:
         Based on this information, please:
         1. Explain what's happening in the video
         2. Answer the question directly
-        3. Include references to specific screenshots when relevant
+        3. Include references to specific screenshots when relevant (use the exact screenshot filename)
         4. Format your response in markdown
         5. Be clear and concise
+        
+        When referencing screenshots, please use the format "Screenshot X" or "screenshot_X.jpg" so they can be included in the final output.
         
         Remember to focus on answering the question: "{self.question}"
         """
@@ -380,13 +538,38 @@ class VideoExplainer:
         report += self.transcript[:1000] + "...\n"  # Truncate if too long
         report += "```\n\n"
         
-        report += "## Screenshots\n\n"
+        # Add UI Detection Legend
+        legend_path = os.path.join(self.output_dir, "annotated_screenshots", "annotation_legend.png")
+        if os.path.exists(legend_path):
+            report += "## UI Detection Legend\n\n"
+            report += f"![UI Detection Legend]({legend_path})\n\n"
+        
+        report += "## Screenshots with UI Detection\n\n"
         for i, screenshot in enumerate(self.screenshots[:5]):  # Show first 5 screenshots
             report += f"### Screenshot {i+1}\n\n"
             report += f"- **Timestamp:** {timedelta(seconds=screenshot['timestamp'])}\n"
             report += f"- **Frame:** {screenshot['frame']}\n"
-            report += f"- **UI elements:** {len(screenshot['ui_elements'])}\n\n"
-            report += f"![Screenshot {i+1}]({screenshot['path']})\n\n"
+            
+            # Add UI element statistics if available
+            if "ui_structure" in screenshot:
+                report += f"- **UI elements detected:** {screenshot['ui_structure']['total_elements']}\n"
+                report += f"  - General elements (DETR): {screenshot['ui_structure']['general_elements']}\n"
+                report += f"  - Specialized elements (LayoutLM): {screenshot['ui_structure']['specialized_elements']}\n"
+                report += f"  - OCR-based elements: {screenshot['ui_structure']['ocr_elements']}\n"
+            else:
+                report += f"- **UI elements:** {len(screenshot['ui_elements'])}\n"
+            
+            report += "\n"
+            
+            # Use annotated image if available, otherwise use original
+            image_path = screenshot.get("annotated_path", screenshot["path"])
+            report += f"![Screenshot {i+1}]({image_path})\n\n"
+            
+            # Add OCR text if available and not empty
+            if screenshot.get("ocr_text") and len(screenshot["ocr_text"].strip()) > 0:
+                report += "**OCR Text:**\n```\n"
+                report += screenshot["ocr_text"][:300] + ("..." if len(screenshot["ocr_text"]) > 300 else "")
+                report += "\n```\n\n"
         
         report += "## Answer\n\n"
         report += self.answer
