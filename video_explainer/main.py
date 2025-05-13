@@ -17,10 +17,9 @@ def main():
     
     # If your API key is hardcoded, you can set it here
     # This is useful for debugging but not recommended for production
-    MISTRAL_API_KEY = "Pa802ifoFCMuGHfQH4KCiLmkmnFpUVRf"
     
     # Use the API key from command line or the hardcoded one
-    api_key = args.api_key or MISTRAL_API_KEY
+    api_key = args.api_key
     
     # FORCE MISTRAL TO BE TRUE for debugging purposes
     # In production, you'd use args.use_mistral instead

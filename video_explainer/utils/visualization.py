@@ -27,12 +27,15 @@ def create_timeline_visualization(transcript_segments, screenshots, scenes, outp
     
     # Plot screenshots
     for i, screenshot in enumerate(screenshots):
+        screenshot["path"] = os.path.join("../", screenshot["path"])
         plt.scatter(screenshot["timestamp"], 2, color='red', s=50)
         
         # Add screenshot filename
         if i % 3 == 0:  # Show every 3rd screenshot name to avoid clutter
             plt.text(screenshot["timestamp"], 2.1, os.path.basename(screenshot["path"]), 
                      fontsize=8, rotation=90)
+            
+        print(f"Screenshot {i}: {screenshot['path']} with path {screenshot['path']}")
     
     # Plot scenes
     for i, scene in enumerate(scenes):
