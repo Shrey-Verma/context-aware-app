@@ -38,7 +38,7 @@ def detect_ui_elements(screenshots, ui_detector):
         for detection in detections:
             ui_elements.append({
                 "label": detection["label"],
-                "score": detection["score"],
+                # "score": detection["score"],
                 "box": detection["box"]
             })
         
@@ -117,7 +117,7 @@ def detect_specialized_ui_elements(screenshots, general_detector, specialized_de
                         specialized_elements.append({
                             "label": label,
                             "text": result["answer"],
-                            "score": result.get("score", 0.7),
+                            # "score": result.get("score", 0.7),
                             "box": {"xmin": 0, "ymin": 0, "xmax": 10, "ymax": 10},  # Placeholder
                             "type": "layout_detected"
                         })
@@ -153,66 +153,114 @@ def detect_specialized_ui_elements(screenshots, general_detector, specialized_de
             print(f"Exception type: {type(e)}")
             specialized_elements = []
         
-        # 4. Extract UI elements from OCR data to enhance detection
+        # 4. Extract UI elements from OCR data with improved filtering
         ocr_ui_elements = []
+        
         # Process OCR data to identify potential UI elements
         if "text" in ocr_data and len(ocr_data["text"]) > 0:
+            # First, filter out low-confidence entries and merge closely positioned text
+            filtered_texts = []
+            filtered_boxes = []
+            min_conf = 50  # Higher confidence threshold to reduce noise
+            min_text_length = 2  # Minimum text length to consider
+            
+            # Group text by lines (approximate)
+            line_texts = {}
             for i in range(len(ocr_data["text"])):
                 text = ocr_data["text"][i].strip()
                 conf = int(ocr_data["conf"][i])
                 
-                # Skip empty or low confidence text
-                if not text or conf < 50:
+                # Skip empty, very short, or low confidence text
+                if not text or len(text) < min_text_length or conf < min_conf:
                     continue
+                
+                # Use the y-coordinate as a proxy for text line
+                # Group texts that are within 5 pixels vertically
+                y_coord = ocr_data["top"][i]
+                line_key = y_coord // 10  # Group by 10-pixel bands
+                
+                if line_key not in line_texts:
+                    line_texts[line_key] = {
+                        "texts": [text],
+                        "x_min": ocr_data["left"][i],
+                        "y_min": ocr_data["top"][i],
+                        "x_max": ocr_data["left"][i] + ocr_data["width"][i],
+                        "y_max": ocr_data["top"][i] + ocr_data["height"][i],
+                        "conf": conf
+                    }
+                else:
+                    # Append text and update bounds
+                    line_texts[line_key]["texts"].append(text)
+                    line_texts[line_key]["x_min"] = min(line_texts[line_key]["x_min"], ocr_data["left"][i])
+                    line_texts[line_key]["y_min"] = min(line_texts[line_key]["y_min"], ocr_data["top"][i])
+                    line_texts[line_key]["x_max"] = max(line_texts[line_key]["x_max"], 
+                                                     ocr_data["left"][i] + ocr_data["width"][i])
+                    line_texts[line_key]["y_max"] = max(line_texts[line_key]["y_max"], 
+                                                     ocr_data["top"][i] + ocr_data["height"][i])
+                    line_texts[line_key]["conf"] = max(line_texts[line_key]["conf"], conf)
+            
+            # Process the merged lines
+            for line_key, line_data in line_texts.items():
+                merged_text = " ".join(line_data["texts"])
                 
                 # Check if text matches common UI element patterns
                 # Buttons often have short text with specific patterns
-                if (len(text) < 20 and 
-                   (text.lower() in ["ok", "cancel", "submit", "send", "login", "logout", "sign up", 
+                if (len(merged_text) < 20 and 
+                   (merged_text.lower() in ["ok", "cancel", "submit", "send", "login", "logout", "sign up", 
                                     "save", "delete", "edit", "update", "next", "previous", "back"] or
-                    text.startswith("→") or text.endswith("→") or
-                    text.startswith(">") or text.endswith(">"))):
+                    merged_text.startswith("→") or merged_text.endswith("→") or
+                    merged_text.startswith(">") or merged_text.endswith(">"))):
                     
                     label = "button"
                     element_type = "ocr_button"
-                    score = 0.8
+                    priority = 3  # High priority
                 
                 # Input fields often have label-like text
-                elif (text.endswith(":") or 
-                     text.lower() in ["username", "password", "email", "name", "address", 
+                elif (merged_text.endswith(":") or 
+                     merged_text.lower() in ["username", "password", "email", "name", "address", 
                                      "phone", "search", "find"]):
                     
                     label = "input_field"
                     element_type = "ocr_input"
-                    score = 0.7
+                    priority = 2  # Medium priority
                 
                 # Menu or navigation items
-                elif (text.lower() in ["home", "about", "contact", "menu", "settings", "profile", 
+                elif (merged_text.lower() in ["home", "about", "contact", "menu", "settings", "profile", 
                                       "help", "faq", "blog", "news", "products", "services"]):
                     
                     label = "menu_item"
                     element_type = "ocr_menu"
-                    score = 0.75
+                    priority = 2  # Medium priority
                 
-                # Default to text element
-                else:
+                # Only include general text if it's likely to be important
+                elif len(merged_text) >= 15 or line_data["conf"] > 80:
                     label = "text"
                     element_type = "ocr_text"
-                    score = 0.5
+                    priority = 1  # Lower priority
+                else:
+                    # Skip short, non-specific text
+                    continue
                 
                 # Add the OCR detected UI element
                 ocr_ui_elements.append({
                     "label": label,
-                    "text": text,
-                    "score": score,
+                    "text": merged_text,
+                    "priority": priority,
                     "box": {
-                        "xmin": ocr_data["left"][i],
-                        "ymin": ocr_data["top"][i],
-                        "xmax": ocr_data["left"][i] + ocr_data["width"][i],
-                        "ymax": ocr_data["top"][i] + ocr_data["height"][i]
+                        "xmin": line_data["x_min"],
+                        "ymin": line_data["y_min"],
+                        "xmax": line_data["x_max"],
+                        "ymax": line_data["y_max"]
                     },
                     "type": element_type
                 })
+        
+        # Sort OCR elements by priority (higher first)
+        ocr_ui_elements.sort(key=lambda x: x.get("priority", 0), reverse=True)
+        
+        # Limit the number of OCR elements based on their importance
+        max_ocr_elements = 10  # Maximum number of OCR elements to include
+        ocr_ui_elements = ocr_ui_elements[:max_ocr_elements]
         
         # 5. Combine all detections into a unified format
         ui_elements = []
@@ -221,7 +269,7 @@ def detect_specialized_ui_elements(screenshots, general_detector, specialized_de
         for detection in general_detections:
             ui_elements.append({
                 "label": detection["label"],
-                "score": detection["score"],
+                # "score": detection["score"],
                 "box": detection["box"],
                 "type": "general_element"
             })
@@ -232,6 +280,9 @@ def detect_specialized_ui_elements(screenshots, general_detector, specialized_de
         
         # Add OCR-based UI elements
         for element in ocr_ui_elements:
+            # Remove the priority field before adding to final list
+            if "priority" in element:
+                del element["priority"]
             ui_elements.append(element)
         
         # Store UI elements and OCR text
@@ -457,3 +508,120 @@ def create_annotation_legend(output_dir):
     
     print(f"Annotation legend created at {legend_path}")
     return legend_path
+
+def print_detected_ui_elements(screenshots):
+    """
+    Print a summary of all detected UI elements across all screenshots
+    
+    Args:
+        screenshots: List of screenshot information with detected UI elements
+    """
+    # Initialize counters
+    total_elements = 0
+    element_types = {}
+    element_labels = {}
+    
+    print("\n" + "="*80)
+    print("UI ELEMENT DETECTION SUMMARY")
+    print("="*80)
+    
+    # Iterate through screenshots
+    for i, screenshot in enumerate(screenshots):
+        if "ui_elements" not in screenshot:
+            continue
+        
+        timestamp = screenshot.get("timestamp", i)
+        ui_elements = screenshot["ui_elements"]
+        
+        print(f"\nScreenshot {i+1} (Timestamp: {timestamp:.2f}s) - {len(ui_elements)} elements detected:")
+        print("-" * 60)
+        
+        # Sort elements by type for better readability
+        sorted_elements = sorted(ui_elements, key=lambda x: (x.get("type", ""), x.get("label", "")))
+        
+        # Group by type for more organized display
+        elements_by_type = {}
+        for element in sorted_elements:
+            element_type = element.get("type", "unknown")
+            if element_type not in elements_by_type:
+                elements_by_type[element_type] = []
+            elements_by_type[element_type].append(element)
+        
+        # Display elements by type
+        for element_type, elements in elements_by_type.items():
+            print(f"\n  {element_type.upper()} ({len(elements)} elements):")
+            
+            for j, element in enumerate(elements):
+                # Extract element details
+                label = element.get("label", "unknown")
+                text = element.get("text", "")
+                box = element.get("box", {})
+                
+                # Update counters
+                total_elements += 1
+                element_types[element_type] = element_types.get(element_type, 0) + 1
+                element_labels[label] = element_labels.get(label, 0) + 1
+                
+                # Format text for display
+                display_text = f'"{text}"' if text else ""
+                if len(display_text) > 30:
+                    display_text = display_text[:27] + '..."'
+                
+                # Print element info
+                box_info = ""
+                if box and all(k in box for k in ["xmin", "ymin", "xmax", "ymax"]):
+                    box_info = f"({box['xmin']},{box['ymin']},{box['xmax']},{box['ymax']})"
+                
+                print(f"    {j+1}. {label} {display_text} {box_info}")
+    
+    # Print overall statistics
+    print("\n" + "="*80)
+    print(f"OVERALL STATISTICS: {total_elements} UI elements detected across {len(screenshots)} screenshots")
+    print("="*80)
+    
+    print("\nElements by Type:")
+    for element_type, count in sorted(element_types.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {element_type}: {count} ({count/total_elements*100:.1f}%)")
+    
+    print("\nElements by Label:")
+    for label, count in sorted(element_labels.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {label}: {count} ({count/total_elements*100:.1f}%)")
+    
+    print("\n" + "="*80)
+
+# Function to add to utils.ui_detection.py for calling from main
+def summarize_ui_detections(screenshots, output_file=None):
+    """
+    Generate and optionally save a summary of UI element detections
+    
+    Args:
+        screenshots: List of screenshot information with detected UI elements
+        output_file: Optional path to save the summary to a file
+    """
+    import sys
+    from io import StringIO
+    
+    # Capture print output
+    original_stdout = sys.stdout
+    string_io = StringIO()
+    sys.stdout = string_io
+    
+    # Generate the summary
+    print_detected_ui_elements(screenshots)
+    
+    # Restore stdout
+    sys.stdout = original_stdout
+    
+    # Get the summary text
+    summary = string_io.getvalue()
+    
+    # Print to console
+    print(summary)
+    
+    # Save to file if requested
+    if output_file:
+        with open(output_file, 'w') as f:
+            f.write(summary)
+        print(f"UI detection summary saved to {output_file}")
+    
+    return summary

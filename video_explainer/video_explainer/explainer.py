@@ -21,7 +21,8 @@ class VideoExplainer:
                 ui_detection_threshold=0.4,
                 scene_threshold=30.0,
                 use_openai=False,  # Changed from use_mistral
-                openai_api_key=None):  # Changed from mistral_api_key
+                openai_api_key=None,
+                annotate_ui = True):  # Changed from mistral_api_key
         """
         Initialize the VideoExplainer.
         
@@ -42,7 +43,8 @@ class VideoExplainer:
         self.ui_detection_threshold = ui_detection_threshold
         self.scene_threshold = scene_threshold
         self.use_openai = use_openai  # Changed from use_mistral
-        self.openai_api_key = openai_api_key  # Changed from mistral_api_key
+        self.openai_api_key = openai_api_key 
+        self.annotate_ui = annotate_ui # Changed from mistral_api_key
 
         print(f"VideoExplainer initialized with: use_openai={use_openai}, API key provided: {bool(openai_api_key)}")
 
@@ -200,13 +202,14 @@ class VideoExplainer:
 
     def _detect_ui_elements(self):
         """Detect UI elements in the screenshots."""
-        from utils.ui_detection import detect_ui_elements, detect_specialized_ui_elements, annotate_ui_elements, create_annotation_legend
-
+        from utils.ui_detection import detect_ui_elements, detect_specialized_ui_elements, annotate_ui_elements, create_annotation_legend, summarize_ui_detections
+        import os
+        
         print("Detecting UI elements in screenshots...")
-
+        
         # Create annotated screenshots directory
         annotated_dir = os.path.join(self.output_dir, "annotated_screenshots")
-
+        
         # Pass both detectors to the utility function
         if hasattr(self, 'use_specialized_ui') and self.use_specialized_ui:
             print("Using enhanced UI detection with Microsoft LayoutLM...")
@@ -222,14 +225,23 @@ class VideoExplainer:
                 self.screenshots, 
                 self.general_ui_detector
             )
-
-        # Annotate UI elements on screenshots
-        print("Annotating detected UI elements...")
-        self.screenshots = annotate_ui_elements(self.screenshots, annotated_dir)
-
-        # Create a legend image to explain the annotation colors
-        legend_path = create_annotation_legend(annotated_dir)
-        print(f"Created annotation legend at {legend_path}")
+        
+        # Generate and save a summary of detected UI elements
+        summary_path = os.path.join(self.output_dir, "ui_detection_summary.txt")
+        summarize_ui_detections(self.screenshots, summary_path)
+        
+        # Only annotate UI elements if requested
+        if self.annotate_ui:
+            # Annotate UI elements on screenshots
+            print("Annotating detected UI elements...")
+            os.makedirs(annotated_dir, exist_ok=True)
+            self.screenshots = annotate_ui_elements(self.screenshots, annotated_dir)
+            
+            # Create a legend image to explain the annotation colors
+            legend_path = create_annotation_legend(annotated_dir)
+            print(f"Created annotation legend at {legend_path}")
+        else:
+            print("Skipping UI annotation (use --annotate-ui flag to enable)")
 
     def _match_transcript_with_screenshots(self):
         """Match transcript segments with relevant screenshots."""
@@ -470,7 +482,7 @@ class VideoExplainer:
         Based on this information, please:
             1. Explain what's happening in the video in a step by step manner
             2. Answer the question directly
-            3. Reference every screenshot used in your explanation. Ensure screenshots are referenced in ascending timestamp order, reflecting the true sequence of events.
+            3. Reference the most relevant screenshot used in your explanation. Ensure screenshots are referenced in ascending timestamp order, reflecting the true sequence of events. The user should know the scene changes and clicks that occurred.
             4. Format your response in markdown
             5. Be clear and concise
         

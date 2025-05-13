@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 from video_explainer.explainer import VideoExplainer
+import os
 
 def main():
     parser = argparse.ArgumentParser(description="Video Explainer: Analyze videos and answer questions")
@@ -8,30 +9,31 @@ def main():
     parser.add_argument("--question", required=True, help="Question about the video")
     parser.add_argument("--output", default="output", help="Output directory")
     parser.add_argument("--interval", type=float, default=2.0, help="Screenshot interval in seconds")
-    parser.add_argument("--use-mistral", action="store_true", help="Use Mistral for answer generation")
-    parser.add_argument("--api-key", help="Mistral API key for answer generation")
+    parser.add_argument("--use-openai", action="store_true", help="Use OpenAI for answer generation")  # Changed from use-mistral
+    parser.add_argument("--api-key", help="OpenAI API key for answer generation")  # Changed from Mistral
     parser.add_argument("--visualize", action="store_true", help="Create visualization of the analysis")
     parser.add_argument("--report", action="store_true", help="Create a comprehensive report")
+    parser.add_argument("--annotate-ui", action="store_true", help="Annotate detected UI elements on screenshots")
     
     args = parser.parse_args()
     
     # If your API key is hardcoded, you can set it here
     # This is useful for debugging but not recommended for production
-    
+   
     # Use the API key from command line or the hardcoded one
-    api_key = args.api_key
+    api_key = args.api_key  # Changed from MISTRAL_API_KEY
     
-    # FORCE MISTRAL TO BE TRUE for debugging purposes
-    # In production, you'd use args.use_mistral instead
-    use_mistral = True  # Set this to True to force using Mistral
+    # FORCE OpenAI to be TRUE for debugging purposes  # Changed from MISTRAL
+    # In production, you'd use args.use_openai instead
+    use_openai = True  # Set this to True to force using OpenAI  # Changed from use_mistral
     
-    # Validate that API key is provided when use-mistral is True
-    if use_mistral and not api_key:
-        print("Error: API key is required when use_mistral=True")
+    # Validate that API key is provided when use-openai is True  # Changed from use-mistral
+    if use_openai and not api_key:  # Changed from use_mistral
+        print("Error: API key is required when use_openai=True")  # Changed from use_mistral
         return
     
     try:
-        print(f"Creating VideoExplainer with use_mistral={use_mistral}, API key provided: {bool(api_key)}")
+        print(f"Creating VideoExplainer with use_openai={use_openai}, API key provided: {bool(api_key)}")  # Changed from use_mistral
         
         # Create VideoExplainer
         explainer = VideoExplainer(
@@ -39,8 +41,9 @@ def main():
             question=args.question,
             output_dir=args.output,
             screenshot_interval=args.interval,
-            use_mistral=use_mistral,  # Use our forced value instead of args.use_mistral
-            mistral_api_key=api_key
+            use_openai=use_openai,  # Use our forced value instead of args.use_openai  # Changed from use_mistral
+            openai_api_key=api_key,
+            annotate_ui=args.annotate_ui  # Changed from mistral_api_ke  # Pass the UI annotation flag
         )
         
         # Process the video
