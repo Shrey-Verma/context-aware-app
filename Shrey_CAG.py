@@ -68,7 +68,6 @@ class VideoExplainer:
         self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.duration = self.frame_count / self.fps
         
-        # Store video analysis results
         self.transcript = None
         self.transcript_segments = []
         self.screenshots = []
