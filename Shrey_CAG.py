@@ -49,8 +49,7 @@ class VideoExplainer:
         self.mistral_api_key = mistral_api_key  # Store the API key as an instance variable
         
         print(f"VideoExplainer initialized with: use_mistral={use_mistral}, API key provided: {bool(mistral_api_key)}")
-        
-        # Create output directory if it doesn't exist
+
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
